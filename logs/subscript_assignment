@@ -1,0 +1,5 @@
+[TensorRT] WARNING: /build/TensorRT/parsers/onnx/onnx2trt_utils.cpp:220: Your ONNX model has been generated with INT64 weights, while TensorRT does not natively support INT64. Attempting to cast down to INT32.
+[TensorRT] WARNING: /build/TensorRT/parsers/onnx/onnx2trt_utils.cpp:246: One or more weights outside the range of INT32 was clamped
+[TensorRT] ERROR: INVALID_ARGUMENT: getPluginCreator could not find plugin ScatterND version 1
+exporting SubscriptAssign to models/subscript_assign.onnx
+compiling models/subscript_assign.onnx with TensorRT

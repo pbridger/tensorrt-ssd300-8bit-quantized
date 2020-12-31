@@ -1,0 +1,7 @@
+[TensorRT] ERROR: INVALID_ARGUMENT: getPluginCreator could not find plugin NonZero version 1
+/opt/conda/lib/python3.6/site-packages/torch/onnx/symbolic_opset9.py:2329: UserWarning: Exporting aten::index operator with indices of type Byte. Only 1-D indices are supported. In any other case, this will produce an incorrect ONNX graph.
+  warnings.warn("Exporting aten::index operator with indices of type Byte. "
+/opt/conda/lib/python3.6/site-packages/torch/onnx/symbolic_opset9.py:591: UserWarning: This model contains a squeeze operation on dimension 1 on an input with unknown shape. Note that if the size of dimension 1 of the input is not 1, the ONNX model will return an error. Opset version 11 supports squeezing on non-singleton dimensions, it is recommended to export this model using opset version 11 or higher.
+  "version 11 or higher.")
+exporting Masking to models/masking.onnx
+compiling models/masking.onnx with TensorRT
