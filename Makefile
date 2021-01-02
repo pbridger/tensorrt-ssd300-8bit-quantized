@@ -14,6 +14,40 @@ run-container: build-container
 	${DOCKER_CMD} ${CONTAINER_NAME}
 
 
+logs/%.svg: logs/%.rec
+	cat $< | svg-term --no-cursor > $@
+
+
+logs/ssd300.fp32.b16.k256.pytorch.rec:
+	rm -f logs/ssd300.fp32.b16.k256.pytorch.bench $@
+	asciinema rec $@.tmp -c 'make --no-print-directory logs/ssd300.fp32.b16.k256.pytorch.bench sleep'
+	python optrec.py $@.tmp $@
+
+logs/ssd300.fp16.b16.k256.pytorch.rec:
+	rm -f logs/ssd300.fp16.b16.k256.pytorch.bench $@
+	asciinema rec $@.tmp -c 'make --no-print-directory logs/ssd300.fp16.b16.k256.pytorch.bench sleep'
+	python optrec.py $@.tmp $@
+
+logs/ssd300.fp32.b16.k256.trt.rec:
+	rm -f logs/ssd300.fp32.b16.k256.trt.bench $@
+	asciinema rec $@.tmp -c 'make --no-print-directory logs/ssd300.fp32.b16.k256.trt.bench sleep'
+	python optrec.py $@.tmp $@
+
+logs/ssd300.fp16.b16.k256.trt.rec:
+	rm -f logs/ssd300.fp16.b16.k256.trt.bench $@
+	asciinema rec $@.tmp -c 'make --no-print-directory logs/ssd300.fp16.b16.k256.trt.bench sleep'
+	python optrec.py $@.tmp $@
+
+logs/ssd300.int8.b16.k256.trt.rec:
+	rm -f logs/ssd300.int8.b16.k256.trt.bench $@
+	asciinema rec $@.tmp -c 'make --no-print-directory logs/ssd300.int8.b16.k256.trt.bench sleep'
+	python optrec.py $@.tmp $@
+
+sleep:
+	@sleep 4
+	@echo '-'
+
+
 ### Internal - to be used from within the container (after run-container) ###
 
 ### Build models

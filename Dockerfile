@@ -22,5 +22,6 @@ WORKDIR /build/TensorRT/tools/onnx-graphsurgeon
 RUN make install
 
 RUN pip install pycuda
+RUN pip install pynvml
 
 WORKDIR /app

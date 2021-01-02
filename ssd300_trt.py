@@ -16,6 +16,7 @@ import pycuda.driver as cuda
 import pycuda.autoinit
 
 from data import get_val_dataloader, get_coco_ground_truth, init_dboxes
+import gpuplot
 
 
 class Int8Calibrator(trt.IInt8EntropyCalibrator2):
@@ -434,7 +435,8 @@ def build_trt_engine(onnx_module, args):
 def benchmark(args):
     app_start = time.time()
 
-    prewarm_iters, bench_iters = 50, 500
+    prewarm_iters = 50
+    bench_secs = 10
 
     val_dataloader = get_val_dataloader(args)
 
@@ -444,26 +446,47 @@ def benchmark(args):
 
     batch_dim = tensor_nchw.size(0)
 
+    update_fps, plot_thread = gpuplot.bg_plot(
+        num_gpus=args.num_devices,
+        sample_hz=5,
+    )
+
+    max_times = 10
+    batch_times = []
+    last_update = time.time()
+    update_period = 0.5
+
     if args.runtime == 'pytorch':
-        print('beginning Pytorch benchmark')
+        print(f'Runtime: Pytorch\nPrecision: {args.precision}\nBatch-dim: {args.batch_dim}\nTop-k: {args.topk}')
         model = SSD300(args.topk, args.detection_threshold, args.iou_threshold, args.precision, args.batch_dim, args.trt_path)
         model = model.eval().to('cuda')
 
         if args.precision == 'fp16':
             tensor_nchw, image_heights, image_widths = [t.to(torch.float16) for t in (tensor_nchw, image_heights, image_widths)]
 
-        print('prewarming model')
+        plot_thread.start()
+
+        print('Prewarming model')
         for i in range(prewarm_iters):
             model(tensor_nchw, image_heights, image_widths)
+            batch_times = (batch_times + [time.time()])[-max_times:]
 
-        print(f'beginning benchmark (+{time.time() - app_start:.1f})...')
+        print(f'Beginning benchmark (+{time.time() - app_start:.1f})...')
         start_time = time.time()
 
-        for i in range(bench_iters):
+        bench_iters = 0
+        while True:
             model(tensor_nchw, image_heights, image_widths)
+            batch_times = (batch_times + [time.time()])[-max_times:]
+            if batch_times[-1] > last_update + update_period and len(batch_times) > 1:
+                last_update = batch_times[-1]
+                update_fps(args.batch_dim * (len(batch_times) - 1) / (batch_times[-1] - batch_times[0]))
+            bench_iters += 1
+            if time.time() > start_time + bench_secs:
+                break
 
     elif args.runtime == 'trt':
-        print('beginning TRT benchmark with', args.trt_path)
+        print(f'Runtime: TensorRT\nPrecision: {args.precision}\nBatch-dim: {args.batch_dim}\nTop-k: {args.topk}')
         np_to_torch_type = {
             np.float32: torch.float32,
             np.float16: torch.float16,
@@ -473,6 +496,9 @@ def benchmark(args):
 
         devices = [cuda.Device(i) for i in range(args.num_devices)]
         contexts = [devices[i].make_context() for i in range(args.num_devices)]
+
+        for d in devices:
+            pycuda.autoinit.context.pop()
 
         context_detail = []
 
@@ -521,7 +547,7 @@ def benchmark(args):
 
         event_queue = queue.Queue(args.num_devices * args.num_streams_per_device)
 
-        def sync_streams():
+        def sync_streams(update_fps, batch_times, max_times, last_update, update_period):
             while True:
                 ce = event_queue.get()
                 if ce is None:
@@ -532,23 +558,33 @@ def benchmark(args):
                     e.synchronize()
                     context.pop()
 
-        sync_thread = threading.Thread(target=sync_streams)
+                    batch_times = (batch_times + [time.time()])[-max_times:]
+                    if batch_times[-1] > last_update + update_period and len(batch_times) > 1:
+                        last_update = batch_times[-1]
+                        update_fps(args.batch_dim * (len(batch_times) - 1) / (batch_times[-1] - batch_times[0]))
+
+        sync_thread = threading.Thread(target=sync_streams, args=(update_fps, batch_times, max_times, last_update, update_period))
         sync_thread.start()
 
-        # for benchmarking purposes, just run model repeatedly on initial batch of inputs
-        for i in range(prewarm_iters + bench_iters):
-            if i == 0:
-                print('prewarming model')
-            elif i == prewarm_iters:
-                print(f'beginning benchmark (+{time.time() - app_start:.1f})...')
-                start_time = time.time()
+        plot_thread.start()
 
-            context_id = i % len(context_detail)
+        # for benchmarking purposes, just run model repeatedly on initial batch of inputs
+        bench_iters = 0
+        while True:
+            if bench_iters == 0:
+                print('Prewarming model')
+            elif bench_iters == prewarm_iters:
+                print(f'Beginning benchmark (+{time.time() - app_start:.1f})...')
+                start_time = time.time()
+            elif bench_iters > prewarm_iters and time.time() > start_time + bench_secs:
+                break
+
+            context_id = bench_iters % len(context_detail)
             context = contexts[context_id]
             context.push()
             try:
                 detail = context_detail[context_id]
-                stream_id = (i - context_id) % len(detail['streams'])
+                stream_id = (bench_iters - context_id) % len(detail['streams'])
                 stream = detail['streams'][stream_id]
                 detail['model'].trt_context.execute_async_v2(
                     bindings=detail['bindings'][stream_id],
@@ -559,14 +595,18 @@ def benchmark(args):
             finally:
                 context.pop()
 
+            bench_iters += 1
+
         event_queue.put(None)
         while not event_queue.empty():
             pass
-
-        for d in devices:
-            pycuda.autoinit.context.pop()
+        bench_iters -= prewarm_iters
 
     total_time = time.time() - start_time
+
+    update_fps(None)
+    plot_thread.join()
+
     print(f'{bench_iters} batches, {bench_iters * batch_dim} images, {total_time:.2f} seconds total')
     print(f'{1000 * total_time / (bench_iters * batch_dim):.1f} ms per image')
     print(f'{(bench_iters * batch_dim) / total_time:.1f} FPS')
